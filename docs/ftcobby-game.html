@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FTC Robot 2D Challenge</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: linear-gradient(180deg, #0f1419, #1a252f);
+            font-family: 'Arial', sans-serif;
+            overflow: hidden;
+        }
+        
+        #gameContainer {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+        }
+        
+        #gameCanvas {
+            display: block;
+            background: linear-gradient(180deg, #2c3e50, #34495e);
+        }
+        
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 100;
+            color: #00ff41;
+            font-size: 20px;
+            text-shadow: 0 0 10px rgba(0, 255, 65, 0.5);
+            font-weight: bold;
+        }
+        
+        #controls {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            z-index: 100;
+            color: white;
+            background: rgba(0, 20, 40, 0.9);
+            padding: 15px;
+            border-radius: 10px;
+            font-size: 14px;
+            border: 1px solid #00ff41;
+        }
+        
+        #status {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            z-index: 100;
+            color: white;
+            font-size: 18px;
+            text-align: right;
+            background: rgba(0, 20, 40, 0.9);
+            padding: 15px;
+            border-radius: 10px;
+            border: 1px solid #ff4400;
+        }
+        
+        #victory {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 200;
+            color: #00ff41;
+            font-size: 48px;
+            font-weight: bold;
+            text-align: center;
+            text-shadow: 0 0 20px rgba(0, 255, 65, 0.8);
+            display: none;
+            animation: victoryPulse 2s infinite;
+            background: rgba(0, 0, 0, 0.95);
+            padding: 40px;
+            border-radius: 20px;
+            border: 3px solid #00ff41;
+        }
+        
+        #failure {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 200;
+            color: #ff4400;
+            font-size: 36px;
+            font-weight: bold;
+            text-align: center;
+            text-shadow: 0 0 20px rgba(255, 68, 0, 0.8);
+            display: none;
+            background: rgba(0, 0, 0, 0.95);
+            padding: 30px;
+            border-radius: 15px;
+            border: 2px solid #ff4400;
+        }
+        
+        @keyframes victoryPulse {
+            0%, 100% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+            50% { opacity: 0.8; transform: translate(-50%, -50%) scale(1.05); }
+        }
+        
+        .checkpoint {
+            color: #ffaa00;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas"></canvas>
+        
+        <div id="ui">
+            <div>🤖 FTC ROBOT 2D CHALLENGE 🏁</div>
+            <div style="font-size: 16px; margin-top: 5px;">Navigate carefully - precision matters!</div>
+        </div>
+        
+        <div id="status">
+            <div>Time: <span id="timeDisplay">0.0</span>s</div>
+            <div>Attempts: <span id="attempts">1</span></div>
+            <div class="checkpoint">Checkpoint: <span id="checkpoint">START</span></div>
+        </div>
+        
+        <div id="controls">
+            <div><strong>🎮 CONTROLS:</strong></div>
+            <div>A/D - Move Left/Right</div>
+            <div>W/S - Climb/Descend</div>
+            <div>Space - Jump</div>
+            <div style="margin-top: 10px; color: #ff4400;">
+                <strong>⚠️ Avoid hazards & gaps!</strong>
+            </div>
+        </div>
+        
+        <div id="victory">
+            <div>🏆 MISSION ACCOMPLISHED! 🏆</div>
+            <div style="font-size: 24px; margin-top: 20px;">FTC Challenge Complete!</div>
+            <div style="font-size: 18px; margin-top: 10px;">Press R to restart</div>
+        </div>
+        
+        <div id="failure">
+            <div>💥 ROBOT MALFUNCTION! 💥</div>
+            <div style="font-size: 20px; margin-top: 15px;">Returning to checkpoint...</div>
+        </div>
+    </div>
+
+    <script>
+        // Canvas setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        resizeCanvas();
+        window.addEventListener('resize', resizeCanvas);
+        
+        // Game variables
+        let camera = { x: 0, y: 0 };
+        let keys = {};
+        let gameWon = false;
+        let isResetting = false;
+        let startTime = Date.now();
+        let attempts = 1;
+        let currentCheckpoint = 0;
+        
+        // Robot properties - much slower movement
+        const robot = {
+            x: 100,
+            y: 400,
+            width: 40,
+            height: 30,
+            vx: 0,
+            vy: 0,
+            speed: 2.5, // Much slower than before
+            jumpPower: 12,
+            onGround: false,
+            color: '#ff6600'
+        };
+        
+        // Physics
+        const gravity = 0.6;
+        const friction = 0.85;
+        const maxSpeed = 3;
+        
+        // Checkpoints
+        const checkpoints = [
+            { name: "START", x: 100, y: 400 },
+            { name: "FIRST GAP", x: 500, y: 400 },
+            { name: "PLATFORM", x: 900, y: 250 },
+            { name: "NARROW BRIDGE", x: 1400, y: 350 },
+            { name: "FINAL JUMP", x: 1800, y: 200 },
+            { name: "FINISH", x: 2200, y: 400 }
+        ];
+        
+        // Platforms and obstacles
+        const platforms = [
+            // Starting area
+            { x: 0, y: 450, width: 400, height: 200, color: '#2a5298' },
+            
+            // First gap challenge
+            { x: 450, y: 450, width: 150, height: 200, color: '#8B4513' },
+            { x: 650, y: 400, width: 100, height: 250, color: '#8B4513' },
+            
+            // Elevated platform section
+            { x: 800, y: 300, width: 250, height: 50, color: '#4169E1' },
+            { x: 1100, y: 200, width: 150, height: 30, color: '#4169E1' },
+            
+            // Narrow bridge
+            { x: 1300, y: 400, width: 300, height: 20, color: '#228B22' },
+            
+            // Jump section
+            { x: 1650, y: 250, width: 80, height: 30, color: '#FF6347' },
+            { x: 1780, y: 200, width: 80, height: 30, color: '#FF6347' },
+            { x: 1900, y: 300, width: 100, height: 30, color: '#FF6347' },
+            
+            // Final platform
+            { x: 2100, y: 450, width: 300, height: 200, color: '#00ff41' }
+        ];
+        
+        // Hazards (spinning obstacles and spikes)
+        const hazards = [
+            { x: 520, y: 350, type: 'spinner', size: 30, rotation: 0 },
+            { x: 1000, y: 120, type: 'spinner', size: 40, rotation: 0 },
+            { x: 1450, y: 320, type: 'spike', width: 20, height: 60 },
+            { x: 1720, y: 120, type: 'spinner', size: 35, rotation: 0 }
+        ];
+        
+        // Event listeners
+        document.addEventListener('keydown', (e) => {
+            keys[e.code] = true;
+        });
+        
+        document.addEventListener('keyup', (e) => {
+            keys[e.code] = false;
+            if (e.code === 'KeyR' && gameWon) {
+                restartGame();
+            }
+        });
+        
+        function updateRobot() {
+            if (gameWon || isResetting) return;
+            
+            // Horizontal movement - slower and more controlled
+            if (keys['KeyA'] || keys['ArrowLeft']) {
+                robot.vx = Math.max(robot.vx - robot.speed * 0.3, -maxSpeed);
+            }
+            if (keys['KeyD'] || keys['ArrowRight']) {
+                robot.vx = Math.min(robot.vx + robot.speed * 0.3, maxSpeed);
+            }
+            
+            // Climbing mechanics for careful navigation
+            if (keys['KeyW'] || keys['ArrowUp']) {
+                if (robot.onGround) {
+                    robot.vy = Math.max(robot.vy - 1, -2); // Slow climb
+                }
+            }
+            if (keys['KeyS'] || keys['ArrowDown']) {
+                robot.vy = Math.min(robot.vy + 1, 4); // Controlled descent
+            }
+            
+            // Jump
+            if (keys['Space'] && robot.onGround) {
+                robot.vy = -robot.jumpPower;
+                robot.onGround = false;
+            }
+            
+            // Apply gravity
+            robot.vy += gravity;
+            
+            // Apply friction
+            robot.vx *= friction;
+            
+            // Update position
+            robot.x += robot.vx;
+            robot.y += robot.vy;
+            
+            // Platform collision
+            robot.onGround = false;
+            platforms.forEach(platform => {
+                if (robot.x + robot.width > platform.x && 
+                    robot.x < platform.x + platform.width &&
+                    robot.y + robot.height > platform.y && 
+                    robot.y < platform.y + platform.height) {
+                    
+                    // Landing on top
+                    if (robot.vy > 0 && robot.y < platform.y) {
+                        robot.y = platform.y - robot.height;
+                        robot.vy = 0;
+                        robot.onGround = true;
+                    }
+                    // Hitting from below
+                    else if (robot.vy < 0 && robot.y > platform.y) {
+                        robot.y = platform.y + platform.height;
+                        robot.vy = 0;
+                    }
+                    // Side collisions
+                    else if (robot.vx > 0) {
+                        robot.x = platform.x - robot.width;
+                        robot.vx = 0;
+                    }
+                    else if (robot.vx < 0) {
+                        robot.x = platform.x + platform.width;
+                        robot.vx = 0;
+                    }
+                }
+            });
+            
+            // Hazard collision
+            hazards.forEach(hazard => {
+                let collision = false;
+                
+                if (hazard.type === 'spinner') {
+                    const dx = robot.x + robot.width/2 - hazard.x;
+                    const dy = robot.y + robot.height/2 - hazard.y;
+                    const distance = Math.sqrt(dx*dx + dy*dy);
+                    collision = distance < hazard.size + Math.min(robot.width, robot.height)/2;
+                    hazard.rotation += 0.1;
+                } else if (hazard.type === 'spike') {
+                    collision = robot.x + robot.width > hazard.x && 
+                              robot.x < hazard.x + hazard.width &&
+                              robot.y + robot.height > hazard.y && 
+                              robot.y < hazard.y + hazard.height;
+                }
+                
+                if (collision) {
+                    resetToCheckpoint();
+                    return;
+                }
+            });
+            
+            // Fall detection
+            if (robot.y > canvas.height + 100) {
+                resetToCheckpoint();
+                return;
+            }
+            
+            // Check checkpoints
+            checkpoints.forEach((checkpoint, index) => {
+                if (index <= currentCheckpoint) return;
+                
+                const distance = Math.abs(robot.x - checkpoint.x);
+                if (distance < 50 && Math.abs(robot.y - checkpoint.y) < 100) {
+                    currentCheckpoint = index;
+                    document.getElementById('checkpoint').textContent = checkpoint.name;
+                    
+                    if (index === checkpoints.length - 1) {
+                        gameWon = true;
+                        document.getElementById('victory').style.display = 'block';
+                    }
+                }
+            });
+            
+            // Update camera to follow robot smoothly
+            const targetCameraX = robot.x - canvas.width / 3;
+            camera.x += (targetCameraX - camera.x) * 0.05;
+        }
+        
+        function resetToCheckpoint() {
+            if (isResetting) return;
+            
+            isResetting = true;
+            attempts++;
+            document.getElementById('attempts').textContent = attempts;
+            document.getElementById('failure').style.display = 'block';
+            
+            setTimeout(() => {
+                const checkpoint = checkpoints[currentCheckpoint];
+                robot.x = checkpoint.x;
+                robot.y = checkpoint.y;
+                robot.vx = 0;
+                robot.vy = 0;
+                
+                document.getElementById('failure').style.display = 'none';
+                isResetting = false;
+            }, 2000);
+        }
+        
+        function restartGame() {
+            const startCheckpoint = checkpoints[0];
+            robot.x = startCheckpoint.x;
+            robot.y = startCheckpoint.y;
+            robot.vx = 0;
+            robot.vy = 0;
+            currentCheckpoint = 0;
+            gameWon = false;
+            attempts = 1;
+            startTime = Date.now();
+            camera.x = 0;
+            
+            document.getElementById('victory').style.display = 'none';
+            document.getElementById('checkpoint').textContent = checkpoints[0].name;
+            document.getElementById('attempts').textContent = attempts;
+        }
+        
+        function render() {
+            // Clear canvas
+            ctx.fillStyle = '#1a252f';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Save context for camera transform
+            ctx.save();
+            ctx.translate(-camera.x, -camera.y);
+            
+            // Draw platforms
+            platforms.forEach(platform => {
+                ctx.fillStyle = platform.color;
+                ctx.fillRect(platform.x, platform.y, platform.width, platform.height);
+                
+                // Platform outline
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(platform.x, platform.y, platform.width, platform.height);
+            });
+            
+            // Draw hazards
+            hazards.forEach(hazard => {
+                if (hazard.type === 'spinner') {
+                    ctx.save();
+                    ctx.translate(hazard.x, hazard.y);
+                    ctx.rotate(hazard.rotation);
+                    
+                    // Draw spinning blades
+                    ctx.fillStyle = '#ff0000';
+                    ctx.fillRect(-hazard.size, -5, hazard.size * 2, 10);
+                    ctx.fillRect(-5, -hazard.size, 10, hazard.size * 2);
+                    
+                    ctx.restore();
+                } else if (hazard.type === 'spike') {
+                    ctx.fillStyle = '#ff4400';
+                    ctx.beginPath();
+                    ctx.moveTo(hazard.x, hazard.y + hazard.height);
+                    ctx.lineTo(hazard.x + hazard.width/2, hazard.y);
+                    ctx.lineTo(hazard.x + hazard.width, hazard.y + hazard.height);
+                    ctx.closePath();
+                    ctx.fill();
+                }
+            });
+            
+            // Draw checkpoints
+            checkpoints.forEach((checkpoint, index) => {
+                if (index <= currentCheckpoint) return;
+                
+                const alpha = 0.6 + 0.4 * Math.sin(Date.now() * 0.005);
+                ctx.fillStyle = index === checkpoints.length - 1 ? 
+                    `rgba(0, 255, 65, ${alpha})` : `rgba(255, 170, 0, ${alpha})`;
+                
+                ctx.beginPath();
+                ctx.arc(checkpoint.x, checkpoint.y - 30, 20, 0, Math.PI * 2);
+                ctx.fill();
+                
+                ctx.fillStyle = '#ffffff';
+                ctx.font = '12px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(index + 1, checkpoint.x, checkpoint.y - 25);
+            });
+            
+            // Draw robot
+            ctx.fillStyle = robot.color;
+            ctx.fillRect(robot.x, robot.y, robot.width, robot.height);
+            
+            // Robot details
+            ctx.fillStyle = '#0066cc';
+            ctx.fillRect(robot.x + 5, robot.y + 5, 10, 15); // Arm
+            ctx.fillStyle = '#00ff41';
+            ctx.fillRect(robot.x + 30, robot.y + 5, 8, 8); // Sensor
+            
+            // Wheels
+            ctx.fillStyle = '#333333';
+            ctx.beginPath();
+            ctx.arc(robot.x + 8, robot.y + 25, 6, 0, Math.PI * 2);
+            ctx.arc(robot.x + 32, robot.y + 25, 6, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.restore();
+            
+            // Update timer
+            if (!gameWon && !isResetting) {
+                const elapsed = (Date.now() - startTime) / 1000;
+                document.getElementById('timeDisplay').textContent = elapsed.toFixed(1);
+            }
+        }
+        
+        function gameLoop() {
+            updateRobot();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>
